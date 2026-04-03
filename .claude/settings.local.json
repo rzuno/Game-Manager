@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from db import GameDB; db = GameDB\\('game_db.csv'\\); db.load\\(\\); print\\(f'Loaded {len\\(db.games\\)} games'\\); from ui import GameManagerApp; print\\('UI module OK'\\)\")"
+    ]
+  }
+}
