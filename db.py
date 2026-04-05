@@ -10,7 +10,21 @@ COLUMNS = [
     'comment', 'start_date', 'end_date', 'price', 'priority',
 ]
 
-STATUSES = ['playing', 'completed', 'paused', 'dropped', 'wishlist', 'other']
+STATUSES = ['playing', 'completed', 'mastered', 'cheated', 'paused', 'dropped', 'wishlist', 'other']
+
+# All statuses that count as "finished"
+FINISHED_STATUSES = ('completed', 'mastered', 'cheated')
+
+STATUS_LABELS = {
+    'completed': '클리어',
+    'mastered': '올클리어',
+    'cheated': '치트 클리어',
+    'playing': '플레이 중',
+    'paused': '일시정지',
+    'dropped': '중단',
+    'wishlist': '위시리스트',
+    'other': '기타',
+}
 SLOTS = ['AAA', 'AA', 'A', '-']
 PRIORITIES = ['high', 'mid', 'low', '']
 

@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime
 
-from db import GameDB, Game, STATUSES, SLOTS, PRIORITIES
+from db import GameDB, Game, STATUSES, SLOTS, PRIORITIES, FINISHED_STATUSES, STATUS_LABELS
 
 
 # ---------------------------------------------------------------------------
@@ -145,9 +145,10 @@ class AddHoursDialog(_Dialog):
 
 
 class CompleteDialog(_Dialog):
-    def __init__(self, parent, game):
+    def __init__(self, parent, game, default_status='completed'):
         super().__init__(parent, "게임 완료")
         self.confirmed = False
+        self.completion_status = default_status
         self.satisfaction = None
         self.comment = ''
         self.end_date = datetime.now().strftime('%Y%m%d')
@@ -159,7 +160,17 @@ class CompleteDialog(_Dialog):
             anchor='w', pady=(0, 10),
         )
 
-        ttk.Label(f, text="만족도 (0.0 ~ 5.0):").pack(anchor='w')
+        ttk.Label(f, text="완료 유형:").pack(anchor='w')
+        self.type_var = tk.StringVar(value=default_status)
+        type_frame = ttk.Frame(f)
+        type_frame.pack(anchor='w', pady=3)
+        for status_key in FINISHED_STATUSES:
+            ttk.Radiobutton(
+                type_frame, text=STATUS_LABELS[status_key],
+                variable=self.type_var, value=status_key,
+            ).pack(side=tk.LEFT, padx=(0, 12))
+
+        ttk.Label(f, text="만족도 (0.0 ~ 5.0):").pack(anchor='w', pady=(5, 0))
         self.sat_var = tk.StringVar()
         sat_entry = ttk.Entry(f, textvariable=self.sat_var, width=10)
         sat_entry.pack(anchor='w', pady=3)
@@ -195,6 +206,7 @@ class CompleteDialog(_Dialog):
                 return
         self.comment = self.comment_var.get().strip()
         self.end_date = self.date_var.get().strip()
+        self.completion_status = self.type_var.get()
         self.confirmed = True
         self.destroy()
 
@@ -457,6 +469,21 @@ class GameManagerApp:
     def _build_history_tab(self):
         bar = ttk.Frame(self.tab_history, padding=5)
         bar.pack(fill=tk.X)
+
+        ttk.Button(bar, text="업적 완료로 변경",
+                   command=self._upgrade_to_mastered).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bar, text="다시 플레이",
+                   command=self._replay_game).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+
+        ttk.Label(bar, text="필터:").pack(side=tk.LEFT)
+        self._history_filter = tk.StringVar(value='all')
+        for text, val in [("전체", 'all'), ("클리어", 'completed'),
+                          ("올클리어", 'mastered'), ("치트", 'cheated')]:
+            ttk.Radiobutton(bar, text=text, variable=self._history_filter,
+                            value=val, command=self._refresh_history).pack(side=tk.LEFT, padx=2)
+
+        ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
         ttk.Label(bar, text="정렬:").pack(side=tk.LEFT)
         for text, key in [("만족도", 'satisfaction'), ("시간", 'hours'),
                           ("완료일", 'end_date'), ("이름", 'name')]:
@@ -466,15 +493,15 @@ class GameManagerApp:
         tree_frame = ttk.Frame(self.tab_history)
         tree_frame.pack(fill=tk.BOTH, expand=True)
 
-        cols = ('name', 'genre', 'hours', 'satisfaction', 'comment', 'start_date', 'end_date')
+        cols = ('name', 'status', 'genre', 'hours', 'satisfaction', 'comment', 'start_date', 'end_date')
         self.history_tree = ttk.Treeview(tree_frame, columns=cols, show='headings', selectmode='browse')
 
-        heads = {'name': '게임명', 'genre': '장르', 'hours': '시간',
+        heads = {'name': '게임명', 'status': '상태', 'genre': '장르', 'hours': '시간',
                  'satisfaction': '만족도', 'comment': '코멘트',
                  'start_date': '시작일', 'end_date': '완료일'}
-        widths = {'name': 180, 'genre': 150, 'hours': 60, 'satisfaction': 60,
-                  'comment': 300, 'start_date': 90, 'end_date': 90}
-        anchors = {'hours': 'e', 'satisfaction': 'center',
+        widths = {'name': 180, 'status': 80, 'genre': 130, 'hours': 60, 'satisfaction': 60,
+                  'comment': 250, 'start_date': 90, 'end_date': 90}
+        anchors = {'status': 'center', 'hours': 'e', 'satisfaction': 'center',
                    'start_date': 'center', 'end_date': 'center'}
 
         for c in cols:
@@ -495,7 +522,11 @@ class GameManagerApp:
     def _refresh_history(self):
         self.history_tree.delete(*self.history_tree.get_children())
         self._history_map.clear()
-        games = self.db.by_status('completed')
+        games = self.db.by_status(*FINISHED_STATUSES)
+
+        filt = self._history_filter.get()
+        if filt != 'all':
+            games = [g for g in games if g.status == filt]
 
         key = self._history_sort_key
         rev = self._history_sort_rev
@@ -516,6 +547,7 @@ class GameManagerApp:
             self._history_map[iid] = g
             self.history_tree.insert('', 'end', iid=iid, values=(
                 g.name,
+                STATUS_LABELS.get(g.status, g.status),
                 g.genre,
                 f"{g.hours:.0f}" if g.hours else '',
                 g.satisfaction if g.satisfaction is not None else '',
@@ -536,6 +568,38 @@ class GameManagerApp:
         sel = self.history_tree.selection()
         if sel and sel[0] in self._history_map:
             self._edit_game(self._history_map[sel[0]])
+
+    def _get_selected_history(self):
+        sel = self.history_tree.selection()
+        if not sel:
+            messagebox.showwarning("선택 필요", "게임을 선택해주세요.")
+            return None
+        return self._history_map.get(sel[0])
+
+    def _upgrade_to_mastered(self):
+        game = self._get_selected_history()
+        if not game:
+            return
+        if game.status == 'mastered':
+            messagebox.showinfo("알림", f"'{game.name}'은(는) 이미 올클리어 상태입니다.")
+            return
+        if messagebox.askyesno("업적 완료", f"'{game.name}'을(를) 올클리어로 변경하시겠습니까?"):
+            game.status = 'mastered'
+            self.db.commit()
+            self.refresh_all()
+
+    def _replay_game(self):
+        game = self._get_selected_history()
+        if not game:
+            return
+        dlg = SlotSelectDialog(self.root, game.name)
+        if dlg.result:
+            game.status = 'playing'
+            game.slot = dlg.result
+            game.start_date = datetime.now().strftime('%Y%m%d')
+            game.end_date = ''
+            self.db.commit()
+            self.refresh_all()
 
     # ── Wishlist tab ──────────────────────────────────────────────────────
 
@@ -714,22 +778,27 @@ class GameManagerApp:
         self._refresh_wishlist()
         self._refresh_others()
 
-        counts = {
-            'playing': len(self.db.by_status('playing')),
-            'completed': len(self.db.by_status('completed')),
-            'wishlist': len(self.db.by_status('wishlist')),
-            'others': len(self.db.by_status('paused', 'dropped', 'other')),
-        }
+        n_playing = len(self.db.by_status('playing'))
+        finished = self.db.by_status(*FINISHED_STATUSES)
+        n_finished = len(finished)
+        n_completed = sum(1 for g in finished if g.status == 'completed')
+        n_mastered = sum(1 for g in finished if g.status == 'mastered')
+        n_cheated = sum(1 for g in finished if g.status == 'cheated')
+        n_wishlist = len(self.db.by_status('wishlist'))
+        n_others = len(self.db.by_status('paused', 'dropped', 'other'))
         total = len(self.db.games)
 
-        self.nb.tab(0, text=f"  현재 플레이 ({counts['playing']})  ")
-        self.nb.tab(1, text=f"  완료 기록 ({counts['completed']})  ")
-        self.nb.tab(2, text=f"  위시리스트 ({counts['wishlist']})  ")
-        self.nb.tab(3, text=f"  기타 ({counts['others']})  ")
+        self.nb.tab(0, text=f"  현재 플레이 ({n_playing})  ")
+        self.nb.tab(1, text=f"  완료 기록 ({n_finished})  ")
+        self.nb.tab(2, text=f"  위시리스트 ({n_wishlist})  ")
+        self.nb.tab(3, text=f"  기타 ({n_others})  ")
 
-        self.status_var.set(
-            f"총 {total}개 | 플레이 중 {counts['playing']} | 완료 {counts['completed']}"
-        )
+        parts = [f"총 {total}개", f"플레이 중 {n_playing}", f"완료 {n_finished}"]
+        if n_mastered:
+            parts.append(f"올클리어 {n_mastered}")
+        if n_cheated:
+            parts.append(f"치트 {n_cheated}")
+        self.status_var.set(" | ".join(parts))
 
     # ── Actions ───────────────────────────────────────────────────────────
 
@@ -749,7 +818,7 @@ class GameManagerApp:
     def _complete_game(self, game: Game):
         dlg = CompleteDialog(self.root, game)
         if dlg.confirmed:
-            game.status = 'completed'
+            game.status = dlg.completion_status
             if dlg.satisfaction is not None:
                 game.satisfaction = dlg.satisfaction
             if dlg.comment:
